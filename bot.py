@@ -53,6 +53,7 @@ processed_transactions = set(trx.lower() for trx in data.get("processed_transact
 
 # Keeps track of ongoing admin actions that require follow-up input.
 admin_sessions = {}
+user_sessions = {}
 
 # Updated vpn_prices structure based on your provided list
 vpn_prices = {
@@ -79,6 +80,7 @@ vpn_prices = {
 # Keys are the exact keys from vpn_prices.
 # Values are lists of required fields in the order they should appear in the input/output.
 DEFAULT_PRODUCT_FIELDS = ["Gmail", "Password"]
+MAX_PURCHASE_QUANTITY = 5
 
 product_fields = {
     "Express VPN": ["Gmail", "Password", "PC Key"],
@@ -111,6 +113,26 @@ def ensure_user(uid): balances.setdefault(uid, 0.0); orders.setdefault(uid, [])
 
 def support_footer():
     return f"\n\n📞 Support: {SUPPORT_CONTACT}"
+
+
+def build_quantity_keyboard(vpn_name, max_qty, selected_qty=None, include_confirm=False):
+    markup = InlineKeyboardMarkup(row_width=3)
+
+    buttons = []
+    for qty in range(1, max_qty + 1):
+        label_prefix = "🔘 " if qty == selected_qty else ""
+        buttons.append(InlineKeyboardButton(f"{label_prefix}{qty}", callback_data=f"select_qty|{vpn_name}|{qty}"))
+
+    for i in range(0, len(buttons), 3):
+        markup.add(*buttons[i:i+3])
+
+    if include_confirm and selected_qty:
+        markup.add(InlineKeyboardButton("✅ Confirm Purchase", callback_data=f"confirm_purchase|{vpn_name}|{selected_qty}"))
+
+    markup.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel_vpn_selection"))
+    markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+
+    return markup
 
 
 def has_processed_trx(trx_id):
@@ -315,51 +337,169 @@ def vpn_selected(c):
     days = vpn_info["days"]
     uid = str(c.from_user.id)
     bal = balances.get(uid, 0.0)
-    stock_count = len(products.get(vpn_name, [])) # Stock count for logic, not display to user
+    stock_count = len(products.get(vpn_name, []))
 
-    kb = InlineKeyboardMarkup()
-    
-    # Message for display (without showing stock count to user)
-    message_text = (
-        f"🛍 *{vpn_name}* ({days} Days)\n"
-        f"Price: {price}৳\n"
-        f"Your Balance: {bal:.2f}৳\n\n"
-    )
-    
     if stock_count == 0:
         safe_answer_callback(c.id, text="This VPN is currently out of stock. Please choose another.", show_alert=True)
-        message_text += "🚫 This VPN is currently *Out of Stock*."
-        # No "Buy Now" button if out of stock
-    elif bal < price:
+        message_text = (
+            f"🛍 *{vpn_name}* ({days} Days)\n"
+            f"Price: {price}৳\n"
+            "🚫 This VPN is currently *Out of Stock*."
+        )
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+        bot.edit_message_text(message_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        return
+
+    affordable_qty = int(bal // price)
+    max_qty = min(stock_count, affordable_qty, MAX_PURCHASE_QUANTITY)
+
+    if max_qty <= 0:
         safe_answer_callback(c.id, text="Insufficient balance. Please add funds.", show_alert=True)
-        message_text += "💰 Insufficient balance. Please add funds."
-        kb.add(InlineKeyboardButton("➕ Add Balance", callback_data="add_balance_shortcut")) # Correct emoji
-    else: # Sufficient balance and stock
-        message_text += "Ready to purchase!"
-        kb.add(InlineKeyboardButton("✅ Buy Now", callback_data=f"buy|{vpn_name}"))
-    
-    # Always include Cancel and Back to Main Menu
-    kb.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel_vpn_selection"))
-    kb.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu")) # Correct emoji
-    
-    bot.edit_message_text(message_text, c.message.chat.id, c.message.message_id, reply_markup=kb, parse_mode="Markdown")
+        message_text = (
+            f"🛍 *{vpn_name}* ({days} Days)\n"
+            f"Price: {price}৳\n"
+            f"Available Stock: {stock_count}\n"
+            f"Your Balance: {bal:.2f}৳\n\n"
+            "💰 Your balance isn't enough for this VPN."
+        )
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("➕ Add Balance", callback_data="add_balance_shortcut"))
+        markup.add(InlineKeyboardButton("❌ Cancel", callback_data="cancel_vpn_selection"))
+        markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+        bot.edit_message_text(message_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        return
+
+    user_sessions[uid] = {
+        "selected_vpn": vpn_name,
+        "max_qty": max_qty
+    }
+
+    instruction_text = (
+        f"🛍 *{vpn_name}* ({days} Days)\n"
+        f"Price per VPN: {price}৳\n"
+        f"Available Stock: {stock_count}\n"
+        f"Your Balance: {bal:.2f}৳\n"
+        f"Maximum you can buy now: {max_qty}\n\n"
+        "🔢 Select how many you want to buy:"
+    )
+
+    markup = build_quantity_keyboard(vpn_name, max_qty)
+    bot.edit_message_text(instruction_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("select_qty|"))
+def select_quantity(c):
+    parts = c.data.split("|")
+    if len(parts) != 3:
+        safe_answer_callback(c.id, text="Invalid selection.", show_alert=True)
+        return
+
+    vpn_name = parts[1]
+    try:
+        selected_qty = int(parts[2])
+    except ValueError:
+        safe_answer_callback(c.id, text="Invalid quantity.", show_alert=True)
+        return
+
+    vpn_info = vpn_prices.get(vpn_name)
+    if not vpn_info:
+        safe_answer_callback(c.id, text="VPN not found.", show_alert=True)
+        return
+
+    uid = str(c.from_user.id)
+    price = vpn_info["price"]
+    days = vpn_info["days"]
+    bal = balances.get(uid, 0.0)
+    stock_count = len(products.get(vpn_name, []))
+
+    if stock_count == 0:
+        bot.edit_message_text("🚫 This VPN just went out of stock. Please choose another.", c.message.chat.id, c.message.message_id)
+        safe_answer_callback(c.id, text="Out of stock.", show_alert=True)
+        return
+
+    affordable_qty = int(bal // price)
+    max_qty = min(stock_count, affordable_qty, MAX_PURCHASE_QUANTITY)
+
+    if max_qty <= 0:
+        message_text = "💰 Your balance isn't enough for this VPN. Please add funds and try again."
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("➕ Add Balance", callback_data="add_balance_shortcut"))
+        markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+        bot.edit_message_text(message_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        safe_answer_callback(c.id, text="Insufficient balance.", show_alert=True)
+        return
+
+    if selected_qty < 1 or selected_qty > max_qty:
+        safe_answer_callback(c.id, text=f"Please choose between 1 and {max_qty}.", show_alert=True)
+        markup = build_quantity_keyboard(vpn_name, max_qty)
+        instruction_text = (
+            f"🛍 *{vpn_name}* ({days} Days)\n"
+            f"Price per VPN: {price}৳\n"
+            f"Available Stock: {stock_count}\n"
+            f"Your Balance: {bal:.2f}৳\n"
+            f"Maximum you can buy now: {max_qty}\n\n"
+            "🔢 Select how many you want to buy:"
+        )
+        bot.edit_message_text(instruction_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        return
+
+    total_cost = price * selected_qty
+    remaining_balance = bal - total_cost
+    remaining_stock = stock_count - selected_qty
+
+    user_sessions[uid] = {
+        "selected_vpn": vpn_name,
+        "selected_qty": selected_qty,
+        "max_qty": max_qty
+    }
+
+    summary_text = (
+        f"🛍 *{vpn_name}* ({days} Days)\n"
+        f"Selected Quantity: {selected_qty}\n"
+        f"Total Cost: {total_cost:.2f}৳\n"
+        f"Your Balance: {bal:.2f}৳ (after purchase: {remaining_balance:.2f}৳)\n"
+        f"Stock remaining after purchase: {max(remaining_stock, 0)}\n\n"
+        "✅ Tap *Confirm Purchase* to continue or pick another quantity."
+    )
+
+    markup = build_quantity_keyboard(vpn_name, max_qty, selected_qty=selected_qty, include_confirm=True)
+    bot.edit_message_text(summary_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+    safe_answer_callback(c.id, text=f"Quantity set to {selected_qty}")
 
 @bot.callback_query_handler(func=lambda c: c.data == "cancel_vpn_selection")
 def cancel_vpn_selection(c):
+    user_sessions.pop(str(c.from_user.id), None)
     bot.edit_message_text("Selection cancelled. Returning to main menu.", c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "Choose an option:", reply_markup=main_menu_markup())
     safe_answer_callback(c.id, text="Cancelled.")
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_main_menu")
 def back_to_main_menu_callback(c):
+    user_sessions.pop(str(c.from_user.id), None)
     bot.edit_message_text("Returning to main menu.", c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "Choose an option:", reply_markup=main_menu_markup())
     safe_answer_callback(c.id, text="Back to main menu.")
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("buy|"))
-def buy_vpn(c):
-    vpn_name = c.data.split("|")[1]
+@bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_purchase|") or c.data.startswith("buy|"))
+def confirm_purchase_callback(c):
+    if c.data.startswith("buy|"):
+        # Legacy fallback: treat as quantity 1 confirmation
+        vpn_name = c.data.split("|")[1]
+        qty = 1
+    else:
+        parts = c.data.split("|")
+        if len(parts) != 3:
+            safe_answer_callback(c.id, text="Invalid confirmation.", show_alert=True)
+            return
+        vpn_name = parts[1]
+        try:
+            qty = int(parts[2])
+        except ValueError:
+            safe_answer_callback(c.id, text="Invalid quantity.", show_alert=True)
+            return
+
     vpn_info = vpn_prices.get(vpn_name)
     if not vpn_info:
         bot.edit_message_text("❌ VPN not found.", c.message.chat.id, c.message.message_id)
@@ -367,51 +507,100 @@ def buy_vpn(c):
         safe_answer_callback(c.id, text="VPN not found.", show_alert=True)
         return
 
-    price = vpn_info["price"]
     uid = str(c.from_user.id)
-    
-    user_balance = balances.get(uid, 0.0)
+    price = vpn_info["price"]
+    days = vpn_info["days"]
+    bal = balances.get(uid, 0.0)
+
+    if qty < 1 or qty > MAX_PURCHASE_QUANTITY:
+        safe_answer_callback(c.id, text="Invalid quantity.", show_alert=True)
+        return
+
     vpn_stock = products.get(vpn_name, [])
 
-    if user_balance >= price and len(vpn_stock) > 0:
-        item = vpn_stock.pop(0) # Take one item from stock
-        balances[uid] = round(user_balance - price, 2) # Update balance
-        orders.setdefault(uid, []).append({"vpn_name": vpn_name, "item": item, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
-            
-        global total_sales
-        total_sales += price # Add to total sales
-        data["products"], data["balances"], data["orders"], data["total_sales"] = products, balances, orders, total_sales
-        save_data(data)
-        
-        # --- MODIFIED: Display VPN details based on product_fields ---
-        msg_details = f"🛍 *{vpn_name}* {vpn_info['days']} Days ✅:\n\n"
-        
-        # Get the fields for this VPN, or default to Gmail/Password
-        fields_to_display = product_fields.get(vpn_name, DEFAULT_PRODUCT_FIELDS)
+    if len(vpn_stock) < qty:
+        stock_count = len(vpn_stock)
+        affordable_qty = int(bal // price)
+        max_qty = min(stock_count, affordable_qty, MAX_PURCHASE_QUANTITY)
 
-        for field_name in fields_to_display:
-            # The actual key in the `item` dictionary will be lowercase and have underscores if multiple words
-            # E.g., "PC Key" becomes "pc_key", "Activation Key" becomes "activation_key"
-            item_key = field_name.replace(" ", "_").lower()
-            msg_details += f"*{field_name}* ➡ `{item.get(item_key, 'N/A')}`\n"
-        # --- END MODIFIED ---
-
-        bot.edit_message_text(msg_details, c.message.chat.id, c.message.message_id, parse_mode="Markdown")
-        bot.send_message(c.message.chat.id, "✅ Purchase successful! You can find this in '📦 My Orders'.", reply_markup=main_menu_markup()) 
-        safe_answer_callback(c.id, text="Purchase successful!", show_alert=True)
-            
-    else:
-        error_msg = ""
-        if len(vpn_stock) == 0:
-            error_msg = "🚫 This VPN is currently *Out of Stock*."
-        elif user_balance < price:
-            error_msg = "💰 Insufficient balance. Please add funds."
+        if max_qty > 0:
+            message_text = (
+                f"🛍 *{vpn_name}* ({days} Days)\n"
+                f"Price per VPN: {price}৳\n"
+                f"Available Stock: {stock_count}\n"
+                f"Your Balance: {bal:.2f}৳\n"
+                f"Maximum you can buy now: {max_qty}\n\n"
+                f"🚫 Only {stock_count} account(s) left. Please choose up to {max_qty}."
+            )
+            markup = build_quantity_keyboard(vpn_name, max_qty)
+            user_sessions[uid] = {
+                "selected_vpn": vpn_name,
+                "max_qty": max_qty
+            }
         else:
-            error_msg = "❌ VPN unavailable or insufficient balance. Please try again."
-        
-        bot.edit_message_text(f"{error_msg}\n\n🏠 Returning to main menu.", c.message.chat.id, c.message.message_id, parse_mode="Markdown")
-        bot.send_message(c.message.chat.id, "Choose an option:", reply_markup=main_menu_markup())
-        safe_answer_callback(c.id, text=error_msg, show_alert=True)
+            message_text = (
+                "🚫 This VPN is currently unavailable for your balance/stock."
+            )
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+
+        bot.edit_message_text(message_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        safe_answer_callback(c.id, text="Insufficient stock.", show_alert=True)
+        return
+
+    total_cost = price * qty
+    if bal < total_cost:
+        message_text = (
+            f"💰 You need {total_cost:.2f}৳ but only have {bal:.2f}৳.\n"
+            "Add balance and try again."
+        )
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("➕ Add Balance", callback_data="add_balance_shortcut"))
+        markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+        bot.edit_message_text(message_text, c.message.chat.id, c.message.message_id, reply_markup=markup, parse_mode="Markdown")
+        safe_answer_callback(c.id, text="Insufficient balance.", show_alert=True)
+        return
+
+    selected_items = [vpn_stock.pop(0) for _ in range(qty)]
+    balances[uid] = round(bal - total_cost, 2)
+
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    for item in selected_items:
+        orders.setdefault(uid, []).append({
+            "vpn_name": vpn_name,
+            "item": item,
+            "timestamp": timestamp
+        })
+
+    global total_sales
+    total_sales += total_cost
+
+    data["products"], data["balances"], data["orders"], data["total_sales"] = products, balances, orders, total_sales
+    save_data(data)
+
+    fields_to_display = product_fields.get(vpn_name, DEFAULT_PRODUCT_FIELDS)
+
+    detail_lines = [
+        f"🛍 *{vpn_name}* {days} Days ✅",
+        f"Quantity: {qty}",
+        f"Total Cost: {total_cost:.2f}৳",
+        ""
+    ]
+
+    for idx, item in enumerate(selected_items, start=1):
+        detail_lines.append(f"*Item {idx}*")
+        for field_name in fields_to_display:
+            item_key = field_name.replace(" ", "_").lower()
+            detail_lines.append(f"└ *{field_name}* ➡ `{item.get(item_key, 'N/A')}`")
+        detail_lines.append("")
+
+    detail_message = "\n".join(detail_lines).strip() + support_footer()
+
+    bot.edit_message_text(detail_message, c.message.chat.id, c.message.message_id, parse_mode="Markdown")
+    bot.send_message(c.message.chat.id, "✅ Purchase successful! Check '📦 My Orders' for your VPN details.", reply_markup=main_menu_markup())
+    safe_answer_callback(c.id, text="Purchase successful!", show_alert=True)
+
+    user_sessions.pop(uid, None)
 
 # ========== MY ORDERS ==========
 @bot.message_handler(func=lambda m: norm_text(m.text) == "📦 my orders")
