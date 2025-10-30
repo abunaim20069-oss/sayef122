@@ -94,9 +94,8 @@ SUPPORT_CONTACT = "@Abdurrahman0999"
 # Helper functions
 def main_menu_markup():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("🛒 Buy Products", "💰 Add Balance")
-    kb.row("📦 My Orders", "💳 My Balance")
-    kb.row("ℹ️ Help & Support")
+    kb.row("🛍️ Browse VPNs", "💳 Add Balance")
+    kb.row("📦 My Orders", "💰 My Balance")
     return kb
 
 def admin_menu_markup():
@@ -236,15 +235,15 @@ def start_or_admin(message):
         "আসসালামু আলাইকুম ❤️‍🩹 *PremiumOne* এ আপনাকে স্বাগতম!\n"
         f"যে কোনও সাহায্যের জন্য যোগাযোগ করুন {SUPPORT_CONTACT}\n\n"
         "*কীভাবে ব্যালেন্স যোগ করবেন* 💳\n"
-        "1️⃣ `Add Balance` এ ক্লিক করুন\n"
+        "1️⃣ `💳 Add Balance` এ ক্লিক করুন\n"
         "2️⃣ `bKash` অথবা `Nagad` বেছে নিন\n"
         "3️⃣ নম্বরে সেন্ড মানি করে TrxID সংরক্ষণ করুন\n"
         "4️⃣ `Payment Done` চাপুন এবং TrxID পাঠান\n\n"
-        "*কীভাবে VPN নিবেন* 🛍\n"
-        "1️⃣ `Buy Products` এ যান\n"
+        "*কীভাবে VPN নিবেন* 🛍️\n"
+        "1️⃣ `🛍️ Browse VPNs` এ যান\n"
         "2️⃣ পছন্দের VPN নির্বাচন করুন\n"
         "3️⃣ ব্যালেন্স যথেষ্ট হলে `Buy Now` চাপুন\n\n"
-        "✅ দ্রুত সাহায্যের জন্য যেকোনো সময় `ℹ️ Help & Support` বাটন ব্যবহার করুন।"
+        f"✅ যে কোনও সময় সরাসরি এই চ্যাটে মেসেজ করুন অথবা {SUPPORT_CONTACT} এ পিং করুন।"
     )
 
     if uid == str(ADMIN_ID):
@@ -260,28 +259,14 @@ def start_or_admin(message):
             bot.send_message(message.chat.id, welcome_message, reply_markup=main_menu_markup(), parse_mode="Markdown")
 
 
-@bot.message_handler(commands=['help'])
-@bot.message_handler(func=lambda m: norm_text(m.text) == "ℹ️ help & support")
-def show_help_and_support(message):
-    help_text = (
-        "ℹ️ *Help & Support*\n\n"
-        "🔹 ব্যালেন্স যোগ করতে `Add Balance` বাটন ব্যবহার করুন এবং TrxID পাঠান।\n"
-        "🔹 সম্পূর্ণ পেমেন্ট নম্বর: `{}`\n"
-        "🔹 কেনাকাটার ইতিহাস দেখতে `My Orders` বেছে নিন।\n"
-        "🔹 নতুন VPN কেনার জন্য `Buy Products` বাটনে যান।\n\n"
-        "📞 অতিরিক্ত সাহায্যের জন্য যোগাযোগ করুন {} অথবা সরাসরি এই চ্যাটে মেসেজ করুন।"
-    ).format(PAYMENT_NUMBER, SUPPORT_CONTACT)
-
-    bot.send_message(message.chat.id, help_text, reply_markup=main_menu_markup())
-
-@bot.message_handler(func=lambda m: norm_text(m.text) == "💳 my balance")
+@bot.message_handler(func=lambda m: norm_text(m.text) == "💰 my balance")
 def show_balance(message):
     uid = str(message.from_user.id)
     ensure_user(uid)
     bot.send_message(message.chat.id, f"💳 Your current balance: {balances.get(uid, 0.0):.2f}৳", reply_markup=main_menu_markup())
 
 # ========== BUY PRODUCTS ==========
-@bot.message_handler(func=lambda m: norm_text(m.text) == "🛒 buy products")
+@bot.message_handler(func=lambda m: norm_text(m.text) == "🛍️ browse vpns")
 def show_vpn_list(message):
     sorted_vpns = sorted(
         vpn_prices.items(),
@@ -435,7 +420,7 @@ def show_my_orders(message):
     user_orders = orders.get(uid)
     
     if not user_orders:
-        bot.send_message(message.chat.id, "You haven't purchased any VPNs yet! Go to '🛒 Buy Products' to get started.", reply_markup=main_menu_markup())
+        bot.send_message(message.chat.id, "You haven't purchased any VPNs yet! Tap '🛍️ Browse VPNs' to get started.", reply_markup=main_menu_markup())
         return
     
     order_list_text = "🛍 Your Recent Orders:\n\n"
@@ -458,7 +443,7 @@ def show_my_orders(message):
     bot.send_message(message.chat.id, order_list_text, parse_mode="Markdown", reply_markup=main_menu_markup())
 
 # ========== ADD BALANCE ==========
-@bot.message_handler(func=lambda m: norm_text(m.text) == "💰 add balance")
+@bot.message_handler(func=lambda m: norm_text(m.text) == "💳 add balance")
 def add_balance_ui(message):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🟣 Bkash", callback_data="add_balance_bkash"))
@@ -942,7 +927,7 @@ def echo_all(message):
     if uid == str(ADMIN_ID):
         bot.send_message(message.chat.id, "Did not understand that admin command. Please use the admin menu buttons.", reply_markup=admin_menu_markup())
     else:
-        bot.send_message(message.chat.id, "I didn't catch that. Please choose an option from the menu অথবা `ℹ️ Help & Support` ব্যবহার করুন।", reply_markup=main_menu_markup())
+        bot.send_message(message.chat.id, "I didn't catch that. Please choose an option from the menu অথবা সরাসরি আমাদের বার্তা পাঠান।", reply_markup=main_menu_markup())
 
 
 print("Bot polling...")
