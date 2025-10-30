@@ -13,7 +13,7 @@ BOT_ID = int(BOT_TOKEN.split(":")[0]) # <--- এটিই সঠিক লাই
 # --- Define the file_id for your general welcome image here ---
 WELCOME_PHOTO_FILE_ID = "AgACAgUAAxkBAANeaN16I-UxernNmUXW0ez9QUwQa78AAkXEMRvSaPFW29cLmQ1jtvIBAAMCAAN5AAM2BA" # Example file_id, replace with yours!
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
 # ========== DATA ==========
 def load_data():
@@ -42,6 +42,9 @@ unmatched_payments = data["unmatched_payments"]
 orders             = data["orders"]
 total_sales        = data["total_sales"]
 
+# Keeps track of ongoing admin actions that require follow-up input.
+admin_sessions = {}
+
 # Updated vpn_prices structure based on your provided list
 vpn_prices = {
     "Express VPN": {"price": 30, "days": 7},
@@ -66,33 +69,60 @@ vpn_prices = {
 # --- NEW: Define expected fields for each VPN type ---
 # Keys are the exact keys from vpn_prices.
 # Values are lists of required fields in the order they should appear in the input/output.
+DEFAULT_PRODUCT_FIELDS = ["Gmail", "Password"]
+
 product_fields = {
-    "ExpressVPN": ["Gmail", "Password", "PC Key"],
-    "HMA": ["Activation Key"], # HMA will only have an activation key
-    # Default for others (if not specified here, it falls back to a generic GMail/Password)
-    # You can explicitly list other VPNs if they have unique fields.
-    # For now, if a VPN is not in this dict, it will use the default "Gmail", "Password".
+    "Express VPN": ["Gmail", "Password", "PC Key"],
+    "HMA VPN": ["Activation Key"], # HMA will only have an activation key
+    # Default for others (if not specified here, it falls back to DEFAULT_PRODUCT_FIELDS)
 }
 # --- END NEW ---
 
 # Payment gateway number (updated to your specified number)
 PAYMENT_NUMBER = "01739089344" 
+SUPPORT_CONTACT = "@Abdurrahman0999"
 
 # Helper functions
 def main_menu_markup():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("🛒 Buy Products", "💰 Add Balance")
     kb.row("📦 My Orders", "💳 My Balance")
+    kb.row("ℹ️ Help & Support")
     return kb
 
 def admin_menu_markup():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("📊 Total Sales", "📈 Current Stock")
+    kb.row("🧾 Pending Payments", "👥 User Lookup")
     kb.row("➕ Add VPN Account", "⬅️ Main Menu (User)")
     return kb
 
 def norm_text(s): return " ".join(s.strip().split()).lower() if isinstance(s, str) else ""
 def ensure_user(uid): balances.setdefault(uid, 0.0); orders.setdefault(uid, [])
+
+
+def format_user_summary(target_uid):
+    ensure_user(target_uid)
+    summary_lines = [
+        f"👤 *User ID:* `{target_uid}`",
+        f"💳 Balance: {balances.get(target_uid, 0.0):.2f}৳",
+        f"🛍 Total Orders: {len(orders.get(target_uid, []))}"
+    ]
+
+    user_orders = orders.get(target_uid, [])
+    if user_orders:
+        last_order = user_orders[-1]
+        summary_lines.append(
+            f"🕒 Last Order: {last_order.get('timestamp', 'N/A')} — {last_order.get('vpn_name', 'N/A')}"
+        )
+
+    pending_trx = [trx.upper() for trx, owner in pending_payments.items() if owner == target_uid]
+    if pending_trx:
+        summary_lines.append("⏳ Pending TRX: " + ", ".join(pending_trx))
+
+    summary_lines.append(f"📞 Support: {SUPPORT_CONTACT}")
+
+    return "\n".join(summary_lines)
 
 def parse_trx_id(text): 
     m_bkash = re.search(r'TrxID[:\s]+([A-Za-z0-9]+)', text, re.I)
@@ -117,21 +147,18 @@ def start_or_admin(message):
     
     # Define your welcome message
     welcome_message = (
-        "আসসালামু আলাইকুম ❤️‍🩹 PremiumOne এ আপনাকে স্বাগতম। কোন প্রকার সমস্যা হলে যোগাযোগ করবেন @Abdurrahman0999\n"
-        "—ধন্যবাদ 💞\n\n"
-        "যেভাবে ব্যালেন্স এড করবেন 💳\n\n"
-        "\t└ 💰ADD BALANCE এ ক্লিক করুন\n"
-        "\t└ bKash/Nagad সিলেক্ট করুন\n"
-        "\t└ নাম্বারটি কপি করে পেমেন্ট করুন\n"
-        "\t└ Trx Id কপি করে রাখুন\n"
-        "\t└ Payment Done ক্লিক করুন\n"
-        "\t└ Trx Id দিন\n"
-        "\t└ Balance Add হয়ে যাবে\n\n"
-        "যেভাবে Vpn নিবেন 🛍\n\n"
-        "\t└ Buy Products এ ক্লিক করুন\n"
-        "\t└ VPN সিলেক্ট করুন\n"
-        "\t└ Buy Now এ ক্লিক করুন"
-    
+        "আসসালামু আলাইকুম ❤️‍🩹 *PremiumOne* এ আপনাকে স্বাগতম!\n"
+        f"যে কোনও সাহায্যের জন্য যোগাযোগ করুন {SUPPORT_CONTACT}\n\n"
+        "*কীভাবে ব্যালেন্স যোগ করবেন* 💳\n"
+        "1️⃣ `Add Balance` এ ক্লিক করুন\n"
+        "2️⃣ `bKash` অথবা `Nagad` বেছে নিন\n"
+        "3️⃣ নম্বরে সেন্ড মানি করে TrxID সংরক্ষণ করুন\n"
+        "4️⃣ `Payment Done` চাপুন এবং TrxID পাঠান\n\n"
+        "*কীভাবে VPN নিবেন* 🛍\n"
+        "1️⃣ `Buy Products` এ যান\n"
+        "2️⃣ পছন্দের VPN নির্বাচন করুন\n"
+        "3️⃣ ব্যালেন্স যথেষ্ট হলে `Buy Now` চাপুন\n\n"
+        "✅ দ্রুত সাহায্যের জন্য যেকোনো সময় `ℹ️ Help & Support` বাটন ব্যবহার করুন।"
     )
 
     if uid == str(ADMIN_ID):
@@ -145,6 +172,21 @@ def start_or_admin(message):
                 bot.send_message(message.chat.id, "Error sending welcome image. " + welcome_message, reply_markup=main_menu_markup(), parse_mode="Markdown")
         else:
             bot.send_message(message.chat.id, welcome_message, reply_markup=main_menu_markup(), parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['help'])
+@bot.message_handler(func=lambda m: norm_text(m.text) == "ℹ️ help & support")
+def show_help_and_support(message):
+    help_text = (
+        "ℹ️ *Help & Support*\n\n"
+        "🔹 ব্যালেন্স যোগ করতে `Add Balance` বাটন ব্যবহার করুন এবং TrxID পাঠান।\n"
+        "🔹 সম্পূর্ণ পেমেন্ট নম্বর: `{}`\n"
+        "🔹 কেনাকাটার ইতিহাস দেখতে `My Orders` বেছে নিন।\n"
+        "🔹 নতুন VPN কেনার জন্য `Buy Products` বাটনে যান।\n\n"
+        "📞 অতিরিক্ত সাহায্যের জন্য যোগাযোগ করুন {} অথবা সরাসরি এই চ্যাটে মেসেজ করুন।"
+    ).format(PAYMENT_NUMBER, SUPPORT_CONTACT)
+
+    bot.send_message(message.chat.id, help_text, reply_markup=main_menu_markup())
 
 @bot.message_handler(func=lambda m: norm_text(m.text) == "💳 my balance")
 def show_balance(message):
@@ -160,11 +202,12 @@ def show_vpn_list(message):
         price = data_item["price"]
         days = data_item["days"]
         stock_count = len(products.get(name, []))
+        days_label = "Day" if days == 1 else "Days"
         
         # Display as requested: name, days, price, and a checkmark (stock status not visible here)
         # Use a dot for out of stock, checkmark for in stock
         status_icon = "✅" if stock_count > 0 else "🔴" # Use a red dot for out of stock
-        markup.add(InlineKeyboardButton(f"{name} {days} Days {price}৳ {status_icon}", callback_data=f"vpn|{name}")) 
+        markup.add(InlineKeyboardButton(f"{name} {days} {days_label} {price}৳ {status_icon}", callback_data=f"vpn|{name}")) 
     bot.send_message(message.chat.id, "🛍 Available VPNs:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("vpn|"))
@@ -252,7 +295,7 @@ def buy_vpn(c):
         msg_details = f"🛍 *{vpn_name}* {vpn_info['days']} Days ✅:\n\n"
         
         # Get the fields for this VPN, or default to Gmail/Password
-        fields_to_display = product_fields.get(vpn_name, ["Gmail", "Password"])
+        fields_to_display = product_fields.get(vpn_name, DEFAULT_PRODUCT_FIELDS)
 
         for field_name in fields_to_display:
             # The actual key in the `item` dictionary will be lowercase and have underscores if multiple words
@@ -298,7 +341,7 @@ def show_my_orders(message):
         order_list_text += f"*{i+1}. {vpn_name}* (Purchased: {timestamp})\n"
         
         # --- MODIFIED: Display VPN details in orders based on product_fields ---
-        fields_to_display = product_fields.get(vpn_name, ["Gmail", "Password"])
+        fields_to_display = product_fields.get(vpn_name, DEFAULT_PRODUCT_FIELDS)
         for field_name in fields_to_display:
             item_key = field_name.replace(" ", "_").lower()
             order_list_text += f"  *{field_name}:* `{item_details.get(item_key, 'N/A')}`\n"
@@ -431,6 +474,191 @@ def show_current_stock(message):
     
     bot.send_message(message.chat.id, stock_report, parse_mode="Markdown", reply_markup=admin_menu_markup())
 
+
+@bot.message_handler(func=lambda m: norm_text(m.text) == "🧾 pending payments" and str(m.from_user.id) == str(ADMIN_ID))
+def show_pending_payments(message):
+    if not pending_payments:
+        bot.send_message(message.chat.id, "✅ বর্তমানে কোনো পেন্ডিং পেমেন্ট নেই।", reply_markup=admin_menu_markup())
+        return
+
+    bot.send_message(message.chat.id, "🧾 Pending payment requests (নীচের বোতাম ব্যবহার করে কনফার্ম/রিজেক্ট করুন):", reply_markup=admin_menu_markup())
+
+    shown = 0
+    for trx, uid in list(pending_payments.items()):
+        markup = InlineKeyboardMarkup()
+        markup.row(
+            InlineKeyboardButton("✅ Confirm", callback_data=f"admin_confirm_trx|{trx}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_trx|{trx}")
+        )
+        markup.row(InlineKeyboardButton("👤 User Profile", callback_data=f"admin_lookup_user|{uid}"))
+
+        message_text = (
+            f"• TRX: `{trx.upper()}`\n"
+            f"• User ID: `{uid}`\n"
+            f"• Current Balance: {balances.get(uid, 0.0):.2f}৳"
+        )
+
+        bot.send_message(message.chat.id, message_text, reply_markup=markup)
+
+        shown += 1
+        if shown >= 10:
+            remaining = len(pending_payments) - shown
+            if remaining > 0:
+                bot.send_message(message.chat.id, f"ℹ️ আরও {remaining} টি রিকুয়েস্ট রয়েছে। পুরোনো রিকুয়েস্টগুলো দেখার জন্য কমান্ডটি আবার ব্যবহার করুন।")
+            break
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("admin_confirm_trx|"))
+def admin_confirm_trx(c):
+    if str(c.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(c.id, "Unauthorized", show_alert=True)
+        return
+
+    trx = c.data.split("|")[1]
+
+    if trx not in pending_payments:
+        bot.answer_callback_query(c.id, "এই TRX ইতোমধ্যে প্রসেস করা হয়েছে।", show_alert=True)
+        bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+        return
+
+    admin_sessions[c.from_user.id] = {
+        "type": "confirm_trx",
+        "trx": trx,
+        "chat_id": c.message.chat.id,
+        "message_id": c.message.message_id
+    }
+
+    prompt = bot.send_message(
+        c.message.chat.id,
+        f"✅ TRX `{trx.upper()}` নির্বাচিত হয়েছে। অনুগ্রহ করে প্রাপ্ত টাকার পরিমাণ লিখুন (শুধু সংখ্যা)।",
+        reply_markup=ForceReply()
+    )
+    bot.register_next_step_handler(prompt, handle_admin_confirm_amount, trx)
+    bot.answer_callback_query(c.id, f"Enter amount for {trx.upper()}")
+
+
+def handle_admin_confirm_amount(message, trx):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        bot.reply_to(message, "Unauthorized.")
+        return
+
+    session = admin_sessions.get(message.from_user.id)
+    if not session or session.get("type") != "confirm_trx" or session.get("trx") != trx:
+        bot.reply_to(message, "❌ This confirmation session is no longer active.")
+        bot.send_message(message.chat.id, "⬅️ Back to Admin Menu:", reply_markup=admin_menu_markup())
+        return
+
+    amount_text = (message.text or "").strip().replace("৳", "").replace(",", "").lower().replace("tk", "")
+
+    try:
+        amount = float(amount_text)
+    except ValueError:
+        retry = bot.reply_to(message, "❌ সঠিক সংখ্যার পরিমাণ লিখুন (উদাহরণ: 150)।", reply_markup=ForceReply())
+        bot.register_next_step_handler(retry, handle_admin_confirm_amount, trx)
+        return
+
+    if amount <= 0:
+        retry = bot.reply_to(message, "❌ পরিমাণ শূন্য হতে পারে না। আবার লিখুন।", reply_markup=ForceReply())
+        bot.register_next_step_handler(retry, handle_admin_confirm_amount, trx)
+        return
+
+    uid = pending_payments.pop(trx, None)
+    if not uid:
+        admin_sessions.pop(message.from_user.id, None)
+        bot.reply_to(message, "⚠️ এই TRX আর পাওয়া যাচ্ছে না। হয়তো ইতোমধ্যে প্রসেস হয়েছে।")
+        bot.send_message(message.chat.id, "⬅️ Back to Admin Menu:", reply_markup=admin_menu_markup())
+        return
+
+    balances[uid] = round(balances.get(uid, 0.0) + amount, 2)
+    data["balances"], data["pending_payments"] = balances, pending_payments
+    save_data(data)
+
+    try:
+        bot.send_message(int(uid), f"আপনার ব্যালেন্স সফলভাবে যুক্ত হয়েছে! 🎉\n└ {amount:.2f} TK\n└ Transaction ID: `{trx.upper()}`\n└ধন্যবাদ! 💖")
+    except Exception as notify_err:
+        bot.send_message(message.chat.id, f"⚠️ ব্যবহারকারীকে মেসেজ পাঠানো যায়নি: {notify_err}")
+
+    bot.reply_to(message, f"✅ User `{uid}` এর অ্যাকাউন্টে {amount:.2f} TK যোগ করা হয়েছে।", parse_mode="Markdown")
+
+    session_info = admin_sessions.pop(message.from_user.id, None)
+    if session_info:
+        updated_text = (
+            f"✅ Confirmed TRX `{trx.upper()}`\n"
+            f"• User: `{uid}`\n"
+            f"• Amount: {amount:.2f} TK"
+        )
+        bot.edit_message_text(
+            updated_text,
+            session_info["chat_id"],
+            session_info["message_id"],
+            reply_markup=None
+        )
+
+    bot.send_message(message.chat.id, "⬅️ Back to Admin Menu:", reply_markup=admin_menu_markup())
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("admin_reject_trx|"))
+def admin_reject_trx(c):
+    if str(c.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(c.id, "Unauthorized", show_alert=True)
+        return
+
+    trx = c.data.split("|")[1]
+    uid = pending_payments.pop(trx, None)
+
+    if uid:
+        data["pending_payments"] = pending_payments
+        save_data(data)
+        try:
+            bot.send_message(int(uid), f"❌ আপনার পেমেন্টটি যাচাই করা যায়নি। TRX `{trx.upper()}` পুনরায় চেক করে আবার পাঠান অথবা {SUPPORT_CONTACT} এ যোগাযোগ করুন।")
+        except Exception as notify_err:
+            bot.send_message(c.message.chat.id, f"⚠️ ব্যবহারকারীকে মেসেজ পাঠানো যায়নি: {notify_err}")
+
+        bot.edit_message_text(
+            f"❌ Rejected TRX `{trx.upper()}` (User `{uid}`)",
+            c.message.chat.id,
+            c.message.message_id,
+            reply_markup=None
+        )
+        bot.answer_callback_query(c.id, f"Rejected {trx.upper()}.")
+    else:
+        bot.answer_callback_query(c.id, "TRX আর পাওয়া যাচ্ছে না।", show_alert=True)
+        bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+
+
+@bot.message_handler(func=lambda m: norm_text(m.text) == "👥 user lookup" and str(m.from_user.id) == str(ADMIN_ID))
+def prompt_admin_user_lookup(message):
+    prompt = bot.send_message(message.chat.id, "🔍 যে ব্যবহারকারীর তথ্য চান তার ইউজার আইডি লিখুন:", reply_markup=ForceReply())
+    bot.register_next_step_handler(prompt, process_admin_user_lookup)
+
+
+def process_admin_user_lookup(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        bot.reply_to(message, "Unauthorized.")
+        return
+
+    target_uid = (message.text or "").strip()
+
+    if not target_uid.isdigit():
+        retry = bot.reply_to(message, "❌ শুধুমাত্র সংখ্যায় টেলিগ্রাম ইউজার আইডি লিখুন।", reply_markup=ForceReply())
+        bot.register_next_step_handler(retry, process_admin_user_lookup)
+        return
+
+    summary = format_user_summary(target_uid)
+    bot.reply_to(message, summary, reply_markup=admin_menu_markup())
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("admin_lookup_user|"))
+def admin_lookup_user_callback(c):
+    if str(c.from_user.id) != str(ADMIN_ID):
+        bot.answer_callback_query(c.id, "Unauthorized", show_alert=True)
+        return
+
+    target_uid = c.data.split("|")[1]
+    summary = format_user_summary(target_uid)
+    bot.answer_callback_query(c.id, f"Showing user {target_uid}")
+    bot.send_message(c.message.chat.id, summary, reply_markup=admin_menu_markup())
+
+
 @bot.message_handler(func=lambda m: norm_text(m.text) == "➕ add vpn account" and str(m.from_user.id) == str(ADMIN_ID))
 def ask_add_vpn_account(message):
     markup = InlineKeyboardMarkup()
@@ -443,7 +671,7 @@ def admin_selected_vpn_to_add(c):
     vpn_name = c.data.split("|")[1]
     
     # --- MODIFIED: Adjust prompt based on product_fields ---
-    prompt_fields = product_fields.get(vpn_name, ["Gmail", "Password"]) # Default to Gmail/Password
+    prompt_fields = product_fields.get(vpn_name, DEFAULT_PRODUCT_FIELDS) # Default to Gmail/Password
     
     prompt_text = f"You selected *{vpn_name}*.\n\nPlease send the VPN account details in the following format:\n\n"
     format_example = ""
@@ -463,7 +691,7 @@ def process_add_vpn_account(message, vpn_name):
     lines = txt.split('\n')
     
     # --- MODIFIED: Parse input based on expected fields ---
-    required_fields_for_vpn = product_fields.get(vpn_name, ["Gmail", "Password"]) # Default to Gmail/Password
+    required_fields_for_vpn = product_fields.get(vpn_name, DEFAULT_PRODUCT_FIELDS) # Default to Gmail/Password
     
     parsed_count = 0
     for line in lines:
@@ -500,9 +728,9 @@ def process_add_vpn_account(message, vpn_name):
 def echo_all(message):
     uid = str(message.from_user.id)
     if uid == str(ADMIN_ID):
-        bot.send_message(message.chat.id, "Did not understand that admin command. Please use the buttons.", reply_markup=admin_menu_markup())
+        bot.send_message(message.chat.id, "Did not understand that admin command. Please use the admin menu buttons.", reply_markup=admin_menu_markup())
     else:
-        bot.send_message(message.chat.id, "I don't understand that command. Please use the menu buttons.", reply_markup=main_menu_markup())
+        bot.send_message(message.chat.id, "I didn't catch that. Please choose an option from the menu অথবা `ℹ️ Help & Support` ব্যবহার করুন।", reply_markup=main_menu_markup())
 
 
 print("Bot polling...")
