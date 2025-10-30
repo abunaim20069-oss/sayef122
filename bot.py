@@ -34,9 +34,11 @@ def load_data():
     data.setdefault("unmatched_payments", {})
     data.setdefault("orders", {})
     data.setdefault("total_sales", 0.0)
+    data.setdefault("processed_transactions", [])
     return data
 
 def save_data(d):
+    d["processed_transactions"] = sorted(processed_transactions)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
 
@@ -47,6 +49,7 @@ pending_payments   = data["pending_payments"]
 unmatched_payments = data["unmatched_payments"]
 orders             = data["orders"]
 total_sales        = data["total_sales"]
+processed_transactions = set(trx.lower() for trx in data.get("processed_transactions", []))
 
 # Keeps track of ongoing admin actions that require follow-up input.
 admin_sessions = {}
@@ -109,6 +112,17 @@ def ensure_user(uid): balances.setdefault(uid, 0.0); orders.setdefault(uid, [])
 
 def support_footer():
     return f"\n\n📞 Support: {SUPPORT_CONTACT}"
+
+
+def has_processed_trx(trx_id):
+    return (trx_id or "").lower() in processed_transactions
+
+
+def mark_trx_processed(trx_id):
+    normalized = (trx_id or "").lower()
+    if not normalized:
+        return
+    processed_transactions.add(normalized)
 
 
 def format_user_summary(target_uid):
@@ -465,6 +479,11 @@ def save_trx_id(message):
         bot.reply_to(message, "❌ Invalid TRX ID format. Please enter a valid Transaction ID.")
         bot.send_message(message.chat.id, "⬅️ Back to menu:", reply_markup=main_menu_markup())
         return
+
+    if has_processed_trx(trx):
+        bot.reply_to(message, "❌ এই TRX ID ইতোমধ্যে কনফার্ম হয়েছে। অনুগ্রহ করে নতুন ট্রান্স্যাকশন আইডি ব্যবহার করুন।")
+        bot.send_message(message.chat.id, "⬅️ Back to menu:", reply_markup=main_menu_markup())
+        return
     
     if trx in pending_payments:
         bot.reply_to(message, "⏳ This TRX ID is already pending admin confirmation.")
@@ -482,6 +501,7 @@ def save_trx_id(message):
         amt = unmatched_payments.pop(trx)
         balances[uid] = round(balances.get(uid, 0.0) + amt, 2)
         data["balances"], data["unmatched_payments"] = balances, unmatched_payments
+        mark_trx_processed(trx)
         save_data(data)
         bot.reply_to(message, f"আপনার ব্যালেন্স সফলভাবে যুক্ত হয়েছে! 🎉\n \t└{amt} TK\n\t└ধন্যবাদ! 💖")
         bot.send_message(ADMIN_ID, f"✅ Auto-confirmed TRX `{trx.upper()}` for user `{uid}`. Amount: {amt} TK", parse_mode="Markdown")
@@ -506,9 +526,14 @@ def admin_bkash_nagad_parser(m):
         bot.reply_to(m, "❌ Could not extract TRX ID or amount from the SMS.")
         return
     
+    if has_processed_trx(trx):
+        bot.reply_to(m, f"⚠️ TRX `{trx.upper()}` ইতোমধ্যে প্রসেস করা হয়েছে।", parse_mode="Markdown")
+        return
+    
     if trx in pending_payments:
         uid = pending_payments.pop(trx)
         balances[uid] = round(balances.get(uid, 0.0) + amt, 2)
+        mark_trx_processed(trx)
         data["balances"], data["pending_payments"] = balances, pending_payments
         save_data(data)
         bot.send_message(int(uid), f"আপনার ব্যালেন্স সফলভাবে যুক্ত হয়েছে! 🎉:\n\t└ {amt} TK\n\t└Transaction ID: `{trx.upper()}`\n\t└ধন্যবাদ! 💖", parse_mode="Markdown")
@@ -639,6 +664,11 @@ def admin_confirm_trx(c):
 
     trx = c.data.split("|")[1]
 
+    if has_processed_trx(trx):
+        safe_answer_callback(c.id, text="এই TRX ইতোমধ্যে প্রসেস করা হয়েছে।", show_alert=True)
+        bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+        return
+
     if trx not in pending_payments:
         safe_answer_callback(c.id, text="এই TRX ইতোমধ্যে প্রসেস করা হয়েছে।", show_alert=True)
         bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
@@ -671,6 +701,11 @@ def handle_admin_confirm_amount(message, trx):
         bot.send_message(message.chat.id, "⬅️ Back to Admin Menu:", reply_markup=admin_menu_markup())
         return
 
+    if has_processed_trx(trx):
+        admin_sessions.pop(message.from_user.id, None)
+        bot.reply_to(message, "⚠️ এই TRX ইতোমধ্যে প্রসেস করা হয়েছে।", reply_markup=admin_menu_markup())
+        return
+
     amount_text = (message.text or "").strip().replace("৳", "").replace(",", "").lower().replace("tk", "")
 
     try:
@@ -693,6 +728,7 @@ def handle_admin_confirm_amount(message, trx):
         return
 
     balances[uid] = round(balances.get(uid, 0.0) + amount, 2)
+    mark_trx_processed(trx)
     data["balances"], data["pending_payments"] = balances, pending_payments
     save_data(data)
 
