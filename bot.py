@@ -3,6 +3,11 @@ import telebot
 from telebot.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 import time # For timestamp in orders
 
+try:
+    from telebot.apihelper import ApiTelegramException
+except Exception:
+    ApiTelegramException = Exception
+
 # ========== CONFIG ==========
 BOT_TOKEN = "7989043300:AAECZAXZ9ycCSBhfYujXQx5CyVW03bh0AUs" # আপনার বট টোকেন
 ADMIN_ID  = 6413241219  # আপনার অ্যাডমিন টেলিগ্রাম ইউজার আইডি
@@ -124,6 +129,23 @@ def format_user_summary(target_uid):
 
     return "\n".join(summary_lines)
 
+
+def safe_answer_callback(query_id, text=None, show_alert=False, url=None, cache_time=None):
+    try:
+        bot.answer_callback_query(
+            query_id,
+            text=text,
+            show_alert=show_alert,
+            url=url,
+            cache_time=cache_time
+        )
+    except ApiTelegramException as exc:
+        message = str(exc).lower()
+        if "query is too old" in message or "timeout" in message or "query id is invalid" in message:
+            print(f"[WARN] Ignored callback query error: {exc}")
+        else:
+            raise
+
 def parse_trx_id(text): 
     m_bkash = re.search(r'TrxID[:\s]+([A-Za-z0-9]+)', text, re.I)
     if m_bkash:
@@ -216,7 +238,7 @@ def vpn_selected(c):
     vpn_info = vpn_prices.get(vpn_name)
     if not vpn_info:
         bot.edit_message_text("❌ VPN not found.", c.message.chat.id, c.message.message_id)
-        bot.answer_callback_query(c.id, "VPN not found.", show_alert=True)
+        safe_answer_callback(c.id, text="VPN not found.", show_alert=True)
         return
 
     price = vpn_info["price"]
@@ -235,11 +257,11 @@ def vpn_selected(c):
     )
     
     if stock_count == 0:
-        bot.answer_callback_query(c.id, "This VPN is currently out of stock. Please choose another.", show_alert=True)
+        safe_answer_callback(c.id, text="This VPN is currently out of stock. Please choose another.", show_alert=True)
         message_text += "🚫 This VPN is currently *Out of Stock*."
         # No "Buy Now" button if out of stock
     elif bal < price:
-        bot.answer_callback_query(c.id, "Insufficient balance. Please add funds.", show_alert=True)
+        safe_answer_callback(c.id, text="Insufficient balance. Please add funds.", show_alert=True)
         message_text += "💰 Insufficient balance. Please add funds."
         kb.add(InlineKeyboardButton("➕ Add Balance", callback_data="add_balance_shortcut")) # Correct emoji
     else: # Sufficient balance and stock
@@ -256,13 +278,13 @@ def vpn_selected(c):
 def cancel_vpn_selection(c):
     bot.edit_message_text("Selection cancelled. Returning to main menu.", c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "Choose an option:", reply_markup=main_menu_markup())
-    bot.answer_callback_query(c.id, "Cancelled.")
+    safe_answer_callback(c.id, text="Cancelled.")
 
 @bot.callback_query_handler(func=lambda c: c.data == "back_to_main_menu")
 def back_to_main_menu_callback(c):
     bot.edit_message_text("Returning to main menu.", c.message.chat.id, c.message.message_id)
     bot.send_message(c.message.chat.id, "Choose an option:", reply_markup=main_menu_markup())
-    bot.answer_callback_query(c.id, "Back to main menu.")
+    safe_answer_callback(c.id, text="Back to main menu.")
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("buy|"))
@@ -272,7 +294,7 @@ def buy_vpn(c):
     if not vpn_info:
         bot.edit_message_text("❌ VPN not found.", c.message.chat.id, c.message.message_id)
         bot.send_message(c.message.chat.id, "⬅️ Back to menu:", reply_markup=main_menu_markup())
-        bot.answer_callback_query(c.id, "VPN not found.", show_alert=True)
+        safe_answer_callback(c.id, text="VPN not found.", show_alert=True)
         return
 
     price = vpn_info["price"]
@@ -306,7 +328,7 @@ def buy_vpn(c):
 
         bot.edit_message_text(msg_details, c.message.chat.id, c.message.message_id, parse_mode="Markdown")
         bot.send_message(c.message.chat.id, "✅ Purchase successful! You can find this in '📦 My Orders'.", reply_markup=main_menu_markup()) 
-        bot.answer_callback_query(c.id, "Purchase successful!", show_alert=True)
+        safe_answer_callback(c.id, text="Purchase successful!", show_alert=True)
             
     else:
         error_msg = ""
@@ -319,7 +341,7 @@ def buy_vpn(c):
         
         bot.edit_message_text(f"{error_msg}\n\n🏠 Returning to main menu.", c.message.chat.id, c.message.message_id, parse_mode="Markdown")
         bot.send_message(c.message.chat.id, "Choose an option:", reply_markup=main_menu_markup())
-        bot.answer_callback_query(c.id, error_msg, show_alert=True)
+        safe_answer_callback(c.id, text=error_msg, show_alert=True)
 
 # ========== MY ORDERS ==========
 @bot.message_handler(func=lambda m: norm_text(m.text) == "📦 my orders")
@@ -364,7 +386,7 @@ def add_balance_shortcut(c):
     kb.add(InlineKeyboardButton("🟣 Bkash", callback_data="add_balance_bkash"))
     kb.add(InlineKeyboardButton("🟠 Nagad", callback_data="add_balance_nagad"))
     bot.edit_message_text("Choose your payment method:", c.message.chat.id, c.message.message_id, reply_markup=kb)
-    bot.answer_callback_query(c.id, "Redirecting to Add Balance section.")
+    safe_answer_callback(c.id, text="Redirecting to Add Balance section.")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("add_balance_"))
 def show_payment_details(c):
@@ -377,13 +399,13 @@ def show_payment_details(c):
         "Trx Id কপি করে রাখবেন\n\nটাকা পাঠানোর পর Payment Done ✅ এ ক্লিক করুন\n └ TRX ID দিন",
         c.message.chat.id, c.message.message_id, parse_mode="Markdown", reply_markup=kb
     )
-    bot.answer_callback_query(c.id, f"Showing {method} payment details.")
+    safe_answer_callback(c.id, text=f"Showing {method} payment details.")
 
 @bot.callback_query_handler(func=lambda c: c.data == "send_trx")
 def ask_trx(c):
     msg = bot.send_message(c.message.chat.id, "📥 TRX ID দিন", reply_markup=ForceReply())
     bot.register_next_step_handler(msg, save_trx_id)
-    bot.answer_callback_query(c.id, "Please send your TRX ID.")
+    safe_answer_callback(c.id, text="Please send your TRX ID.")
 
 def save_trx_id(message):
     uid = str(message.from_user.id)
@@ -510,13 +532,13 @@ def show_pending_payments(message):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_confirm_trx|"))
 def admin_confirm_trx(c):
     if str(c.from_user.id) != str(ADMIN_ID):
-        bot.answer_callback_query(c.id, "Unauthorized", show_alert=True)
+        safe_answer_callback(c.id, text="Unauthorized", show_alert=True)
         return
 
     trx = c.data.split("|")[1]
 
     if trx not in pending_payments:
-        bot.answer_callback_query(c.id, "এই TRX ইতোমধ্যে প্রসেস করা হয়েছে।", show_alert=True)
+        safe_answer_callback(c.id, text="এই TRX ইতোমধ্যে প্রসেস করা হয়েছে।", show_alert=True)
         bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
         return
 
@@ -533,7 +555,7 @@ def admin_confirm_trx(c):
         reply_markup=ForceReply()
     )
     bot.register_next_step_handler(prompt, handle_admin_confirm_amount, trx)
-    bot.answer_callback_query(c.id, f"Enter amount for {trx.upper()}")
+    safe_answer_callback(c.id, text=f"Enter amount for {trx.upper()}")
 
 
 def handle_admin_confirm_amount(message, trx):
@@ -599,7 +621,7 @@ def handle_admin_confirm_amount(message, trx):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_reject_trx|"))
 def admin_reject_trx(c):
     if str(c.from_user.id) != str(ADMIN_ID):
-        bot.answer_callback_query(c.id, "Unauthorized", show_alert=True)
+        safe_answer_callback(c.id, text="Unauthorized", show_alert=True)
         return
 
     trx = c.data.split("|")[1]
@@ -619,9 +641,9 @@ def admin_reject_trx(c):
             c.message.message_id,
             reply_markup=None
         )
-        bot.answer_callback_query(c.id, f"Rejected {trx.upper()}.")
+        safe_answer_callback(c.id, text=f"Rejected {trx.upper()}.")
     else:
-        bot.answer_callback_query(c.id, "TRX আর পাওয়া যাচ্ছে না।", show_alert=True)
+        safe_answer_callback(c.id, text="TRX আর পাওয়া যাচ্ছে না।", show_alert=True)
         bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
 
 
@@ -650,12 +672,12 @@ def process_admin_user_lookup(message):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_lookup_user|"))
 def admin_lookup_user_callback(c):
     if str(c.from_user.id) != str(ADMIN_ID):
-        bot.answer_callback_query(c.id, "Unauthorized", show_alert=True)
+        safe_answer_callback(c.id, text="Unauthorized", show_alert=True)
         return
 
     target_uid = c.data.split("|")[1]
     summary = format_user_summary(target_uid)
-    bot.answer_callback_query(c.id, f"Showing user {target_uid}")
+    safe_answer_callback(c.id, text=f"Showing user {target_uid}")
     bot.send_message(c.message.chat.id, summary, reply_markup=admin_menu_markup())
 
 
@@ -682,7 +704,7 @@ def admin_selected_vpn_to_add(c):
 
     msg = bot.send_message(c.message.chat.id, prompt_text, parse_mode="Markdown", reply_markup=ForceReply())
     bot.register_next_step_handler(msg, process_add_vpn_account, vpn_name)
-    bot.answer_callback_query(c.id, f"Ready to add {vpn_name} account.")
+    safe_answer_callback(c.id, text=f"Ready to add {vpn_name} account.")
 
 
 def process_add_vpn_account(message, vpn_name):
