@@ -1,5 +1,6 @@
 import json, re, sys
 import telebot
+from datetime import datetime
 from telebot.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 import time # For timestamp in orders
 
@@ -128,6 +129,46 @@ def format_user_summary(target_uid):
     summary_lines.append(f"📞 Support: {SUPPORT_CONTACT}")
 
     return "\n".join(summary_lines)
+
+
+def build_sales_report_for_date(target_date_str):
+    vpn_counts = {}
+    order_details = []
+
+    for uid, user_orders in orders.items():
+        for order in user_orders:
+            timestamp = order.get("timestamp", "")
+            if not timestamp:
+                continue
+            order_date = timestamp.split(" ")[0]
+            if order_date == target_date_str:
+                vpn_name = order.get("vpn_name", "Unknown VPN")
+                vpn_counts[vpn_name] = vpn_counts.get(vpn_name, 0) + 1
+                order_details.append({
+                    "vpn_name": vpn_name,
+                    "timestamp": timestamp,
+                    "user_id": uid
+                })
+
+    if not order_details:
+        return False, f"ℹ️ `{target_date_str}` তারিখে কোনো বিক্রয় রেকর্ড নেই।"
+
+    lines = [
+        f"🗓 *Sales Report* — `{target_date_str}`",
+        f"Total VPNs sold: *{len(order_details)}*",
+        "📦 *By VPN:*"
+    ]
+
+    for vpn_name, count in sorted(vpn_counts.items(), key=lambda kv: kv[0].lower()):
+        lines.append(f"• {vpn_name}: {count}")
+
+    lines.append("")
+    lines.append("📋 *Orders:*")
+
+    for idx, detail in enumerate(order_details, start=1):
+        lines.append(f"{idx}. {detail['timestamp']} — {detail['vpn_name']} (User `{detail['user_id']}`)")
+
+    return True, "\n".join(lines)
 
 
 def safe_answer_callback(query_id, text=None, show_alert=False, url=None, cache_time=None):
@@ -478,8 +519,14 @@ def back_to_main_menu_admin(message):
     bot.send_message(message.chat.id, "Returning to main user menu.", reply_markup=main_menu_markup())
 
 @bot.message_handler(func=lambda m: norm_text(m.text) == "📊 total sales" and str(m.from_user.id) == str(ADMIN_ID))
-def show_total_sales(message):
-    bot.send_message(message.chat.id, f"📈 Total Sales Revenue: {total_sales:.2f}৳", reply_markup=admin_menu_markup())
+def prompt_sales_report_date(message):
+    admin_sessions[message.from_user.id] = {"type": "sales_report"}
+    prompt = bot.send_message(
+        message.chat.id,
+        "🗓 কোন দিনের সেল রিপোর্ট দেখতে চান?\n`YYYY-MM-DD` ফরম্যাটে তারিখ পাঠান অথবা `today` লিখুন।",
+        reply_markup=ForceReply()
+    )
+    bot.register_next_step_handler(prompt, process_sales_report_request)
 
 @bot.message_handler(func=lambda m: norm_text(m.text) == "📈 current stock" and str(m.from_user.id) == str(ADMIN_ID))
 def show_current_stock(message):
@@ -495,6 +542,42 @@ def show_current_stock(message):
         stock_report += "No VPNs currently in stock."
     
     bot.send_message(message.chat.id, stock_report, parse_mode="Markdown", reply_markup=admin_menu_markup())
+
+
+def process_sales_report_request(message):
+    if str(message.from_user.id) != str(ADMIN_ID):
+        bot.reply_to(message, "Unauthorized.")
+        return
+
+    session = admin_sessions.get(message.from_user.id)
+    if not session or session.get("type") != "sales_report":
+        bot.reply_to(message, "❌ এই মুহূর্তে কোনো সেল রিপোর্ট অনুরোধ নেই।", reply_markup=admin_menu_markup())
+        return
+
+    raw_text = (message.text or "").strip()
+    if not raw_text:
+        retry = bot.reply_to(message, "❌ সঠিক তারিখ লিখুন (উদাহরণ: 2025-10-30) অথবা `today` লিখুন।", reply_markup=ForceReply())
+        bot.register_next_step_handler(retry, process_sales_report_request)
+        return
+
+    raw_lower = raw_text.lower()
+
+    if raw_lower == "today":
+        target_date_str = datetime.now().strftime("%Y-%m-%d")
+    else:
+        try:
+            parsed_date = datetime.strptime(raw_text, "%Y-%m-%d")
+            target_date_str = parsed_date.strftime("%Y-%m-%d")
+        except ValueError:
+            retry = bot.reply_to(message, "❌ ভুল ফরম্যাট। অনুগ্রহ করে `YYYY-MM-DD` ফরম্যাটে তারিখ দিন অথবা `today` লিখুন।", reply_markup=ForceReply())
+            bot.register_next_step_handler(retry, process_sales_report_request)
+            return
+
+    admin_sessions.pop(message.from_user.id, None)
+
+    _, report_text = build_sales_report_for_date(target_date_str)
+    bot.reply_to(message, report_text, parse_mode="Markdown")
+    bot.send_message(message.chat.id, "⬅️ Back to Admin Menu:", reply_markup=admin_menu_markup())
 
 
 @bot.message_handler(func=lambda m: norm_text(m.text) == "🧾 pending payments" and str(m.from_user.id) == str(ADMIN_ID))
