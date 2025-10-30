@@ -96,7 +96,7 @@ SUPPORT_CONTACT = "@Abdurrahman0999"
 # Helper functions
 def main_menu_markup():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row("🛍️ Browse VPNs", "💳 Add Balance")
+    kb.row("🛍️ Buy Products", "💳 Add Balance")
     kb.row("📦 My Orders", "💰 My Balance")
     return kb
 
@@ -262,7 +262,7 @@ def start_or_admin(message):
         "3️⃣ নম্বরে সেন্ড মানি করে TrxID সংরক্ষণ করুন\n"
         "4️⃣ `Payment Done` চাপুন এবং TrxID পাঠান\n\n"
         "*কীভাবে VPN নিবেন* 🛍️\n"
-        "1️⃣ `🛍️ Browse VPNs` এ যান\n"
+        "1️⃣ `🛍️ Buy Products` এ যান\n"
         "2️⃣ পছন্দের VPN নির্বাচন করুন\n"
         "3️⃣ ব্যালেন্স যথেষ্ট হলে `Buy Now` চাপুন\n\n"
         f"✅ যে কোনও সময় সরাসরি এই চ্যাটে মেসেজ করুন অথবা {SUPPORT_CONTACT} এ পিং করুন।"
@@ -288,7 +288,7 @@ def show_balance(message):
     bot.send_message(message.chat.id, f"💳 Your current balance: {balances.get(uid, 0.0):.2f}৳", reply_markup=main_menu_markup())
 
 # ========== BUY PRODUCTS ==========
-@bot.message_handler(func=lambda m: norm_text(m.text) == "🛍️ browse vpns")
+@bot.message_handler(func=lambda m: norm_text(m.text) == "🛍️ buy products")
 def show_vpn_list(message):
     sorted_vpns = sorted(
         vpn_prices.items(),
@@ -609,7 +609,7 @@ def show_my_orders(message):
     user_orders = orders.get(uid)
     
     if not user_orders:
-        bot.send_message(message.chat.id, "You haven't purchased any VPNs yet! Tap '🛍️ Browse VPNs' to get started.", reply_markup=main_menu_markup())
+        bot.send_message(message.chat.id, "You haven't purchased any VPNs yet! Tap '🛍️ Buy Products' to get started.", reply_markup=main_menu_markup())
         return
     
     order_list_text = "🛍 Your Recent Orders:\n\n"
