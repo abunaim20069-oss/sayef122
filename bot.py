@@ -107,28 +107,31 @@ def norm_text(s): return " ".join(s.strip().split()).lower() if isinstance(s, st
 def ensure_user(uid): balances.setdefault(uid, 0.0); orders.setdefault(uid, [])
 
 
+def support_footer():
+    return f"\n\n📞 Support: {SUPPORT_CONTACT}"
+
+
 def format_user_summary(target_uid):
     ensure_user(target_uid)
     summary_lines = [
-        f"👤 *User ID:* `{target_uid}`",
-        f"💳 Balance: {balances.get(target_uid, 0.0):.2f}৳",
-        f"🛍 Total Orders: {len(orders.get(target_uid, []))}"
+        "📋 *User Overview*",
+        f"└👤 User ID: `{target_uid}`",
+        f"└💳 Balance: {balances.get(target_uid, 0.0):.2f}৳",
+        f"└🛍 Total Orders: {len(orders.get(target_uid, []))}"
     ]
 
     user_orders = orders.get(target_uid, [])
     if user_orders:
         last_order = user_orders[-1]
         summary_lines.append(
-            f"🕒 Last Order: {last_order.get('timestamp', 'N/A')} — {last_order.get('vpn_name', 'N/A')}"
+            f"└🕒 Last Order: {last_order.get('timestamp', 'N/A')} — {last_order.get('vpn_name', 'N/A')}"
         )
 
     pending_trx = [trx.upper() for trx, owner in pending_payments.items() if owner == target_uid]
     if pending_trx:
-        summary_lines.append("⏳ Pending TRX: " + ", ".join(pending_trx))
+        summary_lines.append("└⏳ Pending TRX: " + ", ".join(pending_trx))
 
-    summary_lines.append(f"📞 Support: {SUPPORT_CONTACT}")
-
-    return "\n".join(summary_lines)
+    return "\n".join(summary_lines) + support_footer()
 
 
 def build_sales_report_for_date(target_date_str):
@@ -151,24 +154,30 @@ def build_sales_report_for_date(target_date_str):
                 })
 
     if not order_details:
-        return False, f"ℹ️ `{target_date_str}` তারিখে কোনো বিক্রয় রেকর্ড নেই।"
+        return False, f"ℹ️ `{target_date_str}` তারিখে কোনো বিক্রয় রেকর্ড নেই।" + support_footer()
 
-    lines = [
-        f"🗓 *Sales Report* — `{target_date_str}`",
-        f"Total VPNs sold: *{len(order_details)}*",
-        "📦 *By VPN:*"
-    ]
+    total_sold = len(order_details)
+    vpn_breakdown = "\n".join(
+        [f"   • {vpn_name}: {count}" for vpn_name, count in sorted(vpn_counts.items(), key=lambda kv: kv[0].lower())]
+    ) or "   • (No VPN data)"
 
-    for vpn_name, count in sorted(vpn_counts.items(), key=lambda kv: kv[0].lower()):
-        lines.append(f"• {vpn_name}: {count}")
+    orders_section = "\n".join(
+        [f"   {idx:02d}. {detail['timestamp']} — {detail['vpn_name']} (User `{detail['user_id']}`)" for idx, detail in enumerate(order_details, start=1)]
+    )
 
-    lines.append("")
-    lines.append("📋 *Orders:*")
+    report = (
+        f"🗓 *Sales Summary* ─ `{target_date_str}`\n"
+        "════════════════════════════\n"
+        f"*Total Sold:* {total_sold} VPN{'s' if total_sold != 1 else ''}\n"
+        "\n"
+        "📦 *By VPN*\n"
+        f"{vpn_breakdown}\n"
+        "\n"
+        "📋 *Order Details*\n"
+        f"{orders_section}"
+    )
 
-    for idx, detail in enumerate(order_details, start=1):
-        lines.append(f"{idx}. {detail['timestamp']} — {detail['vpn_name']} (User `{detail['user_id']}`)")
-
-    return True, "\n".join(lines)
+    return True, report + support_footer()
 
 
 def safe_answer_callback(query_id, text=None, show_alert=False, url=None, cache_time=None):
@@ -530,17 +539,22 @@ def prompt_sales_report_date(message):
 
 @bot.message_handler(func=lambda m: norm_text(m.text) == "📈 current stock" and str(m.from_user.id) == str(ADMIN_ID))
 def show_current_stock(message):
-    stock_report = "📦 Current VPN Stock:\n\n"
+    lines = [
+        "📦 *Current VPN Stock*",
+        "════════════════════"
+    ]
     has_stock = False
     for vpn_name in sorted(vpn_prices.keys()): # Sort for consistent display
         stock_list = products.get(vpn_name, [])
-        stock_report += f"*{vpn_name}:* {len(stock_list)} available\n"
-        if len(stock_list) > 0:
+        count = len(stock_list)
+        lines.append(f"• {vpn_name}: {count} available")
+        if count > 0:
             has_stock = True
     
     if not has_stock:
-        stock_report += "No VPNs currently in stock."
+        lines.append("• No VPNs currently in stock.")
     
+    stock_report = "\n".join(lines) + support_footer()
     bot.send_message(message.chat.id, stock_report, parse_mode="Markdown", reply_markup=admin_menu_markup())
 
 
@@ -583,10 +597,14 @@ def process_sales_report_request(message):
 @bot.message_handler(func=lambda m: norm_text(m.text) == "🧾 pending payments" and str(m.from_user.id) == str(ADMIN_ID))
 def show_pending_payments(message):
     if not pending_payments:
-        bot.send_message(message.chat.id, "✅ বর্তমানে কোনো পেন্ডিং পেমেন্ট নেই।", reply_markup=admin_menu_markup())
+        bot.send_message(message.chat.id, "✅ বর্তমানে কোনো পেন্ডিং পেমেন্ট নেই।" + support_footer(), reply_markup=admin_menu_markup(), parse_mode="Markdown")
         return
 
-    bot.send_message(message.chat.id, "🧾 Pending payment requests (নীচের বোতাম ব্যবহার করে কনফার্ম/রিজেক্ট করুন):", reply_markup=admin_menu_markup())
+    intro_text = (
+        "🧾 *Pending Payment Requests*\n"
+        "কনফার্ম বা রিজেক্ট করতে নীচের বোতাম ব্যবহার করুন।"
+    ) + support_footer()
+    bot.send_message(message.chat.id, intro_text, reply_markup=admin_menu_markup(), parse_mode="Markdown")
 
     shown = 0
     for trx, uid in list(pending_payments.items()):
@@ -598,18 +616,19 @@ def show_pending_payments(message):
         markup.row(InlineKeyboardButton("👤 User Profile", callback_data=f"admin_lookup_user|{uid}"))
 
         message_text = (
-            f"• TRX: `{trx.upper()}`\n"
-            f"• User ID: `{uid}`\n"
-            f"• Current Balance: {balances.get(uid, 0.0):.2f}৳"
-        )
+            "💳 *Pending Payment*\n"
+            f"└Trx ID: `{trx.upper()}`\n"
+            f"└User ID: `{uid}`\n"
+            f"└Current Balance: {balances.get(uid, 0.0):.2f}৳"
+        ) + support_footer()
 
-        bot.send_message(message.chat.id, message_text, reply_markup=markup)
+        bot.send_message(message.chat.id, message_text, reply_markup=markup, parse_mode="Markdown")
 
         shown += 1
         if shown >= 10:
             remaining = len(pending_payments) - shown
             if remaining > 0:
-                bot.send_message(message.chat.id, f"ℹ️ আরও {remaining} টি রিকুয়েস্ট রয়েছে। পুরোনো রিকুয়েস্টগুলো দেখার জন্য কমান্ডটি আবার ব্যবহার করুন।")
+                bot.send_message(message.chat.id, f"ℹ️ আরও {remaining} টি রিকুয়েস্ট রয়েছে। পুরোনো রিকুয়েস্টগুলো দেখার জন্য কমান্ডটি আবার ব্যবহার করুন।" + support_footer(), parse_mode="Markdown")
             break
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_confirm_trx|"))
@@ -732,7 +751,12 @@ def admin_reject_trx(c):
 
 @bot.message_handler(func=lambda m: norm_text(m.text) == "👥 user lookup" and str(m.from_user.id) == str(ADMIN_ID))
 def prompt_admin_user_lookup(message):
-    prompt = bot.send_message(message.chat.id, "🔍 যে ব্যবহারকারীর তথ্য চান তার ইউজার আইডি লিখুন:", reply_markup=ForceReply())
+    admin_sessions[message.from_user.id] = {"type": "user_lookup", "last_lookup": None}
+    prompt = bot.send_message(
+        message.chat.id,
+        "🔍 যেই ব্যবহারকারীর তথ্য চান তার ইউজার আইডি লিখুন।\n`me` লিখলে নিজের তথ্য পাবেন, `exit` লিখলে ফিরে যাবেন।",
+        reply_markup=ForceReply()
+    )
     bot.register_next_step_handler(prompt, process_admin_user_lookup)
 
 
@@ -741,15 +765,41 @@ def process_admin_user_lookup(message):
         bot.reply_to(message, "Unauthorized.")
         return
 
-    target_uid = (message.text or "").strip()
-
-    if not target_uid.isdigit():
-        retry = bot.reply_to(message, "❌ শুধুমাত্র সংখ্যায় টেলিগ্রাম ইউজার আইডি লিখুন।", reply_markup=ForceReply())
-        bot.register_next_step_handler(retry, process_admin_user_lookup)
+    session = admin_sessions.get(message.from_user.id)
+    if not session or session.get("type") != "user_lookup":
+        bot.reply_to(message, "❌ এই মুহূর্তে কোনো লুকআপ সেশন চালু নেই।", reply_markup=admin_menu_markup())
         return
 
+    raw_input = (message.text or "").strip()
+    lower_input = raw_input.lower()
+
+    if lower_input in {"exit", "back", "close"}:
+        admin_sessions.pop(message.from_user.id, None)
+        bot.reply_to(message, "✅ ব্যবহারকারী লুকআপ থেকে বেরিয়ে এসেছেন।", reply_markup=admin_menu_markup())
+        return
+
+    if lower_input in {"me", "self", "admin"}:
+        target_uid = str(ADMIN_ID)
+    elif raw_input == "" and session.get("last_lookup"):
+        target_uid = session["last_lookup"]
+    else:
+        if not raw_input.isdigit():
+            retry = bot.reply_to(message, "❌ শুধুমাত্র সংখ্যায় টেলিগ্রাম ইউজার আইডি লিখুন অথবা `me`/`exit` ব্যবহার করুন।", reply_markup=ForceReply())
+            bot.register_next_step_handler(retry, process_admin_user_lookup)
+            return
+        target_uid = raw_input
+
     summary = format_user_summary(target_uid)
-    bot.reply_to(message, summary, reply_markup=admin_menu_markup())
+    admin_sessions[message.from_user.id]["last_lookup"] = target_uid
+
+    bot.reply_to(message, summary, parse_mode="Markdown")
+
+    prompt = bot.send_message(
+        message.chat.id,
+        "আরও কোনো ইউজারের আইডি চাইলে এখনই লিখুন। বের হতে `exit` লিখুন।",
+        reply_markup=ForceReply()
+    )
+    bot.register_next_step_handler(prompt, process_admin_user_lookup)
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_lookup_user|"))
