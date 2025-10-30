@@ -283,18 +283,39 @@ def show_balance(message):
 # ========== BUY PRODUCTS ==========
 @bot.message_handler(func=lambda m: norm_text(m.text) == "🛒 buy products")
 def show_vpn_list(message):
-    markup = InlineKeyboardMarkup()
-    for name, data_item in vpn_prices.items():
+    sorted_vpns = sorted(
+        vpn_prices.items(),
+        key=lambda item: (0 if len(products.get(item[0], [])) > 0 else 1, item[0].lower())
+    )
+
+    lines = [
+        "🛍 *VPN Catalog*",
+        "════════════════",
+    ]
+
+    buttons = []
+    markup = InlineKeyboardMarkup(row_width=2)
+
+    for name, data_item in sorted_vpns:
         price = data_item["price"]
         days = data_item["days"]
         stock_count = len(products.get(name, []))
-        days_label = "Day" if days == 1 else "Days"
-        
-        # Display as requested: name, days, price, and a checkmark (stock status not visible here)
-        # Use a dot for out of stock, checkmark for in stock
-        status_icon = "✅" if stock_count > 0 else "🔴" # Use a red dot for out of stock
-        markup.add(InlineKeyboardButton(f"{name} {days} {days_label} {price}৳ {status_icon}", callback_data=f"vpn|{name}")) 
-    bot.send_message(message.chat.id, "🛍 Available VPNs:", reply_markup=markup)
+        in_stock = stock_count > 0
+        status_icon = "✅" if in_stock else "🔴"
+        stock_note = f"{stock_count} left" if in_stock else "Out of stock"
+        lines.append(f"{status_icon} *{name}* — {days}d · {price}৳ ({stock_note})")
+
+        button_text = f"{status_icon} {name}" if in_stock else f"{status_icon} {name}"
+        buttons.append(InlineKeyboardButton(button_text, callback_data=f"vpn|{name}"))
+
+    if buttons:
+        for i in range(0, len(buttons), 2):
+            markup.add(*buttons[i:i+2])
+
+    markup.add(InlineKeyboardButton("🏠 Main Menu", callback_data="back_to_main_menu"))
+
+    catalog_text = "\n".join(lines) + support_footer()
+    bot.send_message(message.chat.id, catalog_text, reply_markup=markup, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("vpn|"))
 def vpn_selected(c):
